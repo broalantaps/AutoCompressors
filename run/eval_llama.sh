@@ -1,23 +1,11 @@
-#!/bin/bash -l
-#SBATCH -J eval_llama
-#SBATCH -N 1 -n 1
-#SBATCH --output=slurm/%x-%j.out
-#SBATCH --gres=gpu:a100:1 --constraint gpu80
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=128G
-#SBATCH -t 0-3:00:00
-
-
-
 
 nvidia-smi
-conda activate auto
 base_model=${BASE:-"Llama-2-7b-hf"}
-run_name=${NAME:-"ac_Llama-2-7b-hf_sub2_seg2_sum50_lr4e-4_bsz32_rand_accu/checkpoint-65000"}    # use llama-2-7b-hf for base model
+# run_name=${NAME:-"ac_Llama-2-7b-hf_sub2_seg2_sum50_lr4e-4_bsz32_rand_accu/checkpoint-65000"}    # use llama-2-7b-hf for base model
 block_size=${BLOCK:-8192}
 
-total=${BATCH:-32}      # total batch size
-bs=${SEQ:-2}            # batch size per device
+total=${BATCH:-12}      # total batch size
+bs=${SEQ:-1}            # batch size per device
 lr=${LR:-8e-4}
 warmup_steps=${WU:-5000}
 save_steps=${SAVE:-5000}
@@ -37,8 +25,8 @@ num_nodes=${NUM_NODES:-1}
 node=${NODE:-"localhost"}
 ################################
 
-num_gpus=$(jq -n "[$CUDA_VISIBLE_DEVICES] | length")
-total_per_device=$((${total}/${num_gpus}/${num_nodes}))
+num_gpus=${NUM_GPUS:-1}
+total_per_device=$((${total}/${num_gpus}))
 accu=$(( ${total_per_device} / ${bs} ))
 
 run_name="checkpoints/${run_name}"
@@ -99,43 +87,47 @@ arguments=(
     --segment_lengths $segment_lengths
     --segment_gradient_checkpointing $segment_gradient_checkpointing
     --bf16
-    --run_name $run_name
-    --rope_theta ${rope_theta}
+    --fast_attention
+    # --run_name $run_name
     $@
+    # --rope_theta ${rope_theta}
+    
 )
 
 echo "Evaluating on ${block_size} token sequences"
 data="preprocessed_redpajama-weighted-disjoint_${block_size}"
-arguments+=(--preprocessed_validation_datasets \
-                    ${data}/arxiv \
-                    ${data}/book \
-                    ${data}/c4 \
-                    ${data}/github \
-                    ${data}/stack_exchange \
-                    ${data}/wiki \
-                    ${data}/cc/2019-30-head-en \
-                    ${data}/cc/2019-30-middle-en \
-                    ${data}/cc/2020-05-head-en \
-                    ${data}/cc/2020-05-middle-en \
-                    ${data}/cc/2021-04-head-en \
-                    ${data}/cc/2021-04-middle-en \
-                    ${data}/cc/2022-05-head-en \
-                    ${data}/cc/2022-05-middle-en \
-                    ${data}/cc/2023-06-head-en \
-                    ${data}/cc/2023-06-middle-en \
-                    )
+arguments+=(--preprocessed_validation_datasets awettig/RedPajama-combined-15B-6K-llama)
 
-if [[ $run_name == checkpoints/ac_Llama* ]]; then
-    arguments+=(
-    --lora
-    --lora_path $run_name
-    --lora_r 16
-    --lora_alpha 16
-    --lora_dropout 0.05
-    --lora_target_modules q_proj v_proj o_proj k_proj
-    --lora_modules_to_save embed_summary
-    )
-fi
+# arguments+=(--preprocessed_validation_datasets \
+#                     ${data}/arxiv \
+#                     ${data}/book \
+#                     ${data}/c4 \
+#                     ${data}/github \
+#                     ${data}/stack_exchange \
+#                     ${data}/wiki \
+#                     ${data}/cc/2019-30-head-en \
+#                     ${data}/cc/2019-30-middle-en \
+#                     ${data}/cc/2020-05-head-en \
+#                     ${data}/cc/2020-05-middle-en \
+#                     ${data}/cc/2021-04-head-en \
+#                     ${data}/cc/2021-04-middle-en \
+#                     ${data}/cc/2022-05-head-en \
+#                     ${data}/cc/2022-05-middle-en \
+#                     ${data}/cc/2023-06-head-en \
+#                     ${data}/cc/2023-06-middle-en \
+#                     )
+
+# if [[ $run_name == checkpoints/ac_Llama* ]]; then
+#     arguments+=(
+#     --lora
+#     --lora_path $run_name
+#     --lora_r 16
+#     --lora_alpha 16
+#     --lora_dropout 0.05
+#     --lora_target_modules q_proj v_proj o_proj k_proj
+#     --lora_modules_to_save embed_summary
+#     )
+# fi
 
 #################
 

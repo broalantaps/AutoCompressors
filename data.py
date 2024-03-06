@@ -203,8 +203,8 @@ def preprocess_datasets(raw_datasets, tokenizer, data_args, training_args):
 
 
 def load_preprocessed_datasets(data_args, model_args):
-    assert data_args.preprocessed_train_datasets is not None
-    assert data_args.preprocessed_validation_datasets is not None
+    # can only eval(train) or both
+    assert data_args.preprocessed_train_datasets or data_args.preprocessed_validation_datasets is not None
     d = {}
     for train_file in data_args.preprocessed_train_datasets:
         name = os.path.basename(train_file).split(".")[0]
@@ -222,7 +222,7 @@ def load_preprocessed_datasets(data_args, model_args):
 
     for valid_file in data_args.preprocessed_validation_datasets:
         name = os.path.basename(valid_file).split(".")[0]
-        if os.path.exists(train_file):
+        if os.path.exists(valid_file):
             data = datasets.load_from_disk(valid_file)
         else:
             data = datasets.load_dataset(
@@ -236,10 +236,16 @@ def load_preprocessed_datasets(data_args, model_args):
 
 
     train_data = []
+    validation_data = []
     for key in d.keys():
         if key.startswith("train"):
             train_data.append(d[key])
-    d["train"] = datasets.concatenate_datasets(train_data)
+        if key.startswith("validation"):
+            validation_data.append(d[key])
+    # if train_data is not None:
+    #     d["train"] = datasets.concatenate_datasets(train_data)
+    if validation_data is not None:
+        d["validation"] = datasets.concatenate_datasets(validation_data)
 
     lm_datasets = datasets.dataset_dict.DatasetDict(d)
     return lm_datasets
