@@ -21,27 +21,34 @@ class TrainingArguments(HfTrainingArguments):
         metadata={"help": "If True, summary tokens of all past segments will be accumulated "
                           "when passed to the next segment."}
     )
-
+    # 设置获取梯度的频率
     training_substeps: Optional[int] = field(
         default=1,
         metadata={"help": "How often to detach gradients (1 substep=standard training)"}
     )
+    # 是否开启随机长度切分segment
     randomize_substeps: Optional[bool] = field(
         default=False,
         metadata={"help": "apply  strategy to determine substep lengths in each substep"}
-    )
+    )   
+    # 这个参数的意思
     segments_per_substep: int = field(
         default=2,
         metadata={"help": "Number of substeps per segments when using --randomize_substep"}
     )
+    
+    # 设置压缩成段的最大tokens数目（如果不开启随机segment长度的话就使用这个值）
     segment_lengths: List[int] = field(
         default_factory=list,
         metadata={"help": "Max. number of tokens compressed per segment in a substep. Applies only when substeps are not randomized."}
     )
+    # 这个暂时不管
     segment_gradient_checkpointing: bool = field(
         default=False,
         metadata={"help": "If True, gradient checkpointing will be used after each segment."}
     )
+    
+    # 不管
     fast_attention: bool = field(
         default=False,
         metadata={"help": "Use fast attention during training (experimental)"}

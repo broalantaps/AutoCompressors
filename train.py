@@ -1,3 +1,7 @@
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "2,3"
+os.environ['http_proxy'] = '127.0.0.1:10652'
+os.environ['https_proxy'] = '127.0.0.1:10652'
 import logging
 import math
 import os
@@ -283,5 +287,7 @@ def main():
 
 
 if __name__ == "__main__":
+    # torch.cuda.set_device(2)
+    # print(torch.cuda.current_device())
     main()
 

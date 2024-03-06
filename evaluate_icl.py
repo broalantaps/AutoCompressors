@@ -11,7 +11,7 @@ import transformers
 
 import auto_compressor
 import icl_dataset_loading
-
+import wandb
 def read_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", required=True)
@@ -58,6 +58,7 @@ def get_model_tokenizer_device_isac(args):
 
     return model, tokenizer, device, is_ac
 
+# Dataloader 用于加载数据集
 class PromptGenerator(torch.utils.data.Dataset):
     def __init__(self, dataset: dict,
         tokenizer, 
@@ -99,35 +100,44 @@ class PromptGenerator(torch.utils.data.Dataset):
                 random.shuffle(label_wise_idxs[label])
             zipped_label_wise_idxs = list(zip(*label_wise_idxs.values()))
             staggered_idxs = [idx for sublist in zipped_label_wise_idxs for idx in sublist] 
+            #  = 30 + 30 + 30 + 2 = 92
             num_total_demonstrations = sum(self.num_softprompt_demonstrations) + num_plaintext_demonstrations
             if len(staggered_idxs) < num_total_demonstrations:
                 # repeat the list if there aren't enough examples
                 staggered_idxs = staggered_idxs * (num_total_demonstrations // len(staggered_idxs) + 1)
+            # 随机选取一个位置
             start_splice_pos = random.randint(0, len(staggered_idxs) - num_total_demonstrations)
+            # 从随机位置开始取出92个tokens
             sample_idxs = staggered_idxs[start_splice_pos:start_splice_pos + num_total_demonstrations]
         else:   # using random sampling
+            #random.sample是随机抽取92个位置(不重复),但是可能是乱序的
             sample_idxs = random.sample(range(len(self.dataset["train"])), sum(num_softprompt_demonstrations) + num_plaintext_demonstrations)
-
+        # softprompt_idxs 是取出前90个位置，plaintext_idxs是取出后面2个位置
         softprompt_idxs = sample_idxs[:sum(num_softprompt_demonstrations)]
         plaintext_idxs = sample_idxs[sum(num_softprompt_demonstrations):]
 
         if sum(self.num_softprompt_demonstrations) > 0: # if softprompt demonstrations are needed
 
             # splitting all softprompt demonstrations into chunks based on num_softprompt_demonstrations
+            # 从softprompt_idxs中取出90个位置，然后分成3个chunk，每个chunk分别有30个位置(相当于是随机取出90个样本的意思)
             softprompt_examples = self.dataset["train"][softprompt_idxs]
             softprompt_examples = iter([dict(zip(softprompt_examples, i)) for i in zip(*softprompt_examples.values())]) # unzip dict
+            # 分成3段 每段30个样本
             chunked_softprompt_examples = [list(itertools.islice(softprompt_examples, 0, i)) for i in num_softprompt_demonstrations] 
             
             chunked_softprompt_demonstrations_tokens = []
             chunked_softprompt_demonstration_counts = []
             add_special_tokens = True   # adds start token only to the first chunk
             for chunk in chunked_softprompt_examples:
+                # chunked_softprompt_demonstration_count 是样本数
                 softprompt_demonstrations_tokens, chunked_softprompt_demonstration_count = \
                     self.get_demonstrations_tokens(chunk, add_special_tokens=add_special_tokens)
                 chunked_softprompt_demonstrations_tokens.append(softprompt_demonstrations_tokens)
                 chunked_softprompt_demonstration_counts.append(chunked_softprompt_demonstration_count)
                 add_special_tokens = False
+            # 保存每个chunk的tokens(全部chunk里面的tokens合成一条，一共有3条)
             self.all_softprompts_demonstrations_tokens = chunked_softprompt_demonstrations_tokens # list of torch.Tensor
+            # 正常是30 30 30的形状
             self.num_softprompt_demonstrations = chunked_softprompt_demonstration_counts # revised list of int
             
         if self.num_plaintext_demonstrations > 0: # if plaintext demonstrations are needed
@@ -159,6 +169,7 @@ class PromptGenerator(torch.utils.data.Dataset):
         return demonstration_string
         
     def get_demonstrations_tokens(self, examples: list, add_special_tokens: bool, max_tokens=float('inf')):
+        # max_tokens没有传值 默认无穷大
         """
         Tokenizes demonstrations and returns the tokens and the number of examples that were used to create them (constrained by max_tokens).
 
@@ -173,10 +184,12 @@ class PromptGenerator(torch.utils.data.Dataset):
         
         # keep adding examples until max_tokens is reached
         for example in examples:
+            # 这里的get_demonstration_string会返回一串sentence+answer的字符串
             demonstration_string = self.get_demonstration_string(example) + self.delimiter
             extended_demonstrations_string = demonstrations_string + demonstration_string
+            # 对这个含有答案的字符串进行编码
             extended_demonstrations_tokens = self.tokenizer.encode(extended_demonstrations_string, add_special_tokens=add_special_tokens)
-            
+            # 一直累加成长条tokens
             if len(extended_demonstrations_tokens) <= max_tokens:
                 demonstrations_string = extended_demonstrations_string
                 num_examples += 1       
@@ -283,6 +296,7 @@ def main(args):
     if use_softprompt:
         softprompt = None
         for softprompt_demonstrations_tokens in prompt_generator.all_softprompts_demonstrations_tokens:
+            # 单条最长tokens设为2048
             assert softprompt_demonstrations_tokens.shape[1] <= 2048, "Softprompt too long!"
             with torch.no_grad():
                 softprompt = model.forward(
@@ -351,8 +365,20 @@ def main(args):
         progress_bar.set_postfix({"accuracy": num_correct / num_total}, refresh=False)
             
     print("Accuracy:", num_correct / num_total)
+    wandb.log({"Accuracy": num_correct / num_total})
+    wandb.finish()
 
 if __name__ == "__main__":
+    import os
+    wandb.login()
+    wandb.init(project="In-Context Learning",
+            name="sst2-ICL-750tokens",
+            config={
+                "type":"ICL-750tokens"
+            }
+    )
+    os.environ["http_proxy"] = "127.0.0.1:10652"
+    os.environ["https_proxy"] = "127.0.0.1:10652"
     main(read_args())
 
 """
@@ -363,3 +389,4 @@ python3 evaluate_icl.py --model_path princeton-nlp/AutoCompressor-2.7b-6k --data
 python3 evaluate_icl.py --model_path princeton-nlp/AutoCompressor-Llama-2-7b-6k --dataset sst2 --num_softprompt_demonstrations 30 30 30 --num_plaintext_demonstrations 2 --seed 1 --use_calibration
 python3 evaluate_icl.py --model_path princeton-nlp/FullAttention-Llama-2-7b-6k --dataset ag_news --num_plaintext_demonstrations 5 --seed 1 
 """
+# python3 evaluate_icl.py --model_path princeton-nlp/AutoCompressor-Llama-2-7b-6k --dataset sst2 --num_softprompt_demonstrations 30 30 30 --num_plaintext_demonstrations 0 --seed 1 --use_calibration

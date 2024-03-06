@@ -18,14 +18,15 @@ logger = logging.getLogger(__name__)
 
 PastKVType = Optional[Tuple[Tuple[torch.FloatTensor]]]
 
+# dataclass用于简化类的实现，可以自动实现__init__、__repr__等方法
 @dataclass
 class SummaryConfig:
     """Keep track of token constitution of current input sequence"""
     softprompt_length: int = 0
     past_key_values_softprompt_length: int = 0
     summary_length: int = 0
-
     def reset(self):
+        """重置属性"""
         self.softprompt_length = 0
         self.past_key_values_softprompt_length = 0
         self.summary_length = 0
@@ -41,14 +42,17 @@ class AutoCompressorMixin:
 
     def setup_autocompressor(self, config):
         """Call this function in the subclass __init__ to initialize the autocompressor. Override for custom behaviour"""
+        """hasattr()函数是Python内置函数之一,用于判断对象是否具有指定的属性或方法。"""
         assert hasattr(self.config, 'summary_length'), "Compressor requires a summary_length config parameter"
 
         self.summary_config = SummaryConfig()
 
         if config.summary_length > 0:
+            """创建一个词表长度为summary_length,表征维度为embedding_dim的embedding"""
             self.embed_summary = nn.Embedding(config.summary_length, self.get_input_embeddings().embedding_dim)
-
+            """初始化embedding的权重"""
             input_embeds = self.get_input_embeddings()
+            """将embed_summary权重初始化为eos_token_id位置的embedding权重"""
             self.embed_summary.weight.data[:,:] = (
                 input_embeds.weight[config.eos_token_id]
             )
@@ -123,6 +127,7 @@ class AutoCompressorMixin:
         segment_last_hiddens = (
             outputs.last_hidden_state[:, softprompt_length:total_length - summary_length]
         )
+        "new_softprompt返回summary_vec"
         new_softprompt = outputs.last_hidden_state[:, total_length - summary_length:]
 
         return outputs, segment_last_hiddens, new_softprompt
@@ -155,34 +160,42 @@ class AutoCompressorMixin:
             past_key_values_softprompt_length = 0
 
         past_key_values_length = self.get_past_key_values_len(past_key_values) - past_key_values_softprompt_length
-
+        """不支持控制注意力头的输出"""
         if head_mask is not None:
             raise ValueError("Compressor does not support head_mask")
+        """不能同时输入input_ids和inputs_embeds"""
         if inputs_embeds is not None and input_ids is not None:
             raise ValueError("Compressor does not support both input_ids and input_embeds")
 
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        """inputs_embeds是input_ids的embedding"""
+        """self.embed_tokens = nn.Embedding(config.vocab_size, config.d_model, self.padding_idx),然后get_input_embeddings是返回self.embed_tokens"""
+        """过程是将input_ids输入self.embed_tokens转换为embedding"""
+        
         if inputs_embeds is None and input_ids is not None:
             inputs_embeds = self.get_input_embeddings()(input_ids)
-
+        """"""
         if self.config.summary_length > 0:
+            """"(inputs_embeds.size(0), self.config.summary_length)的张量,这个张量的每一行都是一个从0到self.config.summary_length - 1的整数序列"""
+            # 为什么是从0到summary_length的整数序列呢？
             summary_token_ids = torch.arange(self.config.summary_length, dtype=torch.long, device=inputs_embeds.device).unsqueeze(0).expand(inputs_embeds.size(0), -1)
+            """将summary_token_ids转换为embedding"""
             summary_token_embeds = self.embed_summary(summary_token_ids).to(inputs_embeds.dtype)
         else:
             summary_token_embeds = inputs_embeds[:,:0]
-
+        #  summary_token_embeds 就已经是这个embedding了
         # If no past_key_values are given, we will process the sequence in multiple segments
         if past_key_values is None:
-            segment_lengths = segment_lengths if segment_lengths is not None else input_ids.size(1)
-
+            segment_lengths = segment_lengths if segment_lengths is not None else input_ids.size(1)  # size(1)是行数据
             if attention_mask is None:
+                # 注意力全部为1
                 attention_mask = torch.ones(
                     inputs_embeds.size(0), inputs_embeds.size(1), dtype=torch.long, device=inputs_embeds.device
                 )
-
             inputs_embeds_list = torch.split(inputs_embeds, segment_lengths, dim=1)
             attention_mask_list = torch.split(attention_mask, segment_lengths, dim=1)
+            
             summary_token_embeds_list = (
                 (summary_token_embeds,) * (len(inputs_embeds_list) - 1) +
                 (summary_token_embeds if output_softprompt else summary_token_embeds[:,:0,:],)
@@ -193,7 +206,7 @@ class AutoCompressorMixin:
                 attention_mask = torch.ones(
                     inputs_embeds.size(0), inputs_embeds.size(1) + past_key_values_length, dtype=torch.long, device=inputs_embeds.device
                 )
-
+            
             if use_cache and past_key_values_length + inputs_embeds.size(1) == segment_lengths:
                 output_softprompt = True
 

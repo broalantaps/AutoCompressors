@@ -114,6 +114,7 @@ class SubstepTrainer(BaseTrainer):
         total_loss = 0
         softprompt = None
         metrics = {}
+        # training_substeps次循环后获取梯度
         for substep in range(self.args.training_substeps):
             input_slice, segment_lengths = self.segment_input(inputs, substep)
             if torch.any((input_slice["labels"] != -100).sum(-1) == 0):
@@ -212,6 +213,7 @@ class SubstepTrainer(BaseTrainer):
         return total_loss / self.args.training_substeps
 
     def random_segment_lengths(self, input_ids, num_segments):
+        # 这个函数应该是获取随机切分的segment长度列表，列表里的随机长度位num_segments个
         """Returns a list of random segment lengths that sum up to num_segments"""
         max_positions = self.model.config.max_position_embeddings
         if num_segments > 1:
@@ -227,20 +229,23 @@ class SubstepTrainer(BaseTrainer):
             segment_lengths = (segment_lengths + min_segment_length).tolist()
         else:
             segment_lengths = [input_ids.size(1)]
+        # 返回一个列表，列表里面有num_segments个值表示每段segment的长度
         return segment_lengths
 
     def segment_input(self, inputs, substep):
         """Returns the sliced inputs and the random segment lengths when randomize_substeps=True"""
-        
+        # 返回切片后的输入和分段长度值
         # if using segment_lenghts, keep only the end segment of the inputs. This is useful for evaluation. During training, segment lengths should sum to the total block_size
         if not self.args.randomize_substeps:
             total_length = sum(self.args.segment_lengths) * self.args.training_substeps
             inputs["input_ids"] = inputs["input_ids"][:, -total_length:]
             inputs["attention_mask"] = inputs["attention_mask"][:, -total_length:]
             inputs["labels"] = inputs["labels"][:, -total_length:]
-
+            # 0—— 1 2 3 4 5 6
+        # 为啥这里要+1 
         slices = torch.linspace(0, inputs["input_ids"].shape[-1], steps=self.args.training_substeps + 1, device=inputs["input_ids"].device, dtype=torch.long)
         input_slice = {k: v[:, slices[substep]: slices[substep+1]] for k, v in inputs.items()}
+        
         if self.args.randomize_substeps:
             segment_lengths = self.random_segment_lengths(input_slice["input_ids"], self.args.segments_per_substep)
         else:
